@@ -1,0 +1,10 @@
+---------------------------------------------------------------------------------------------------
+Version: 2.0.1
+Date: 2025-12-31
+  Changes:
+    - Added combinator to show current research levels for inifinite research.
+---------------------------------------------------------------------------------------------------
+Version: 2.0.0
+Date: 2025-12-31
+  Changes:
+    - Initial release compatible with Factorio 2.0 and Space Age mod.

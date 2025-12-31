@@ -1,7 +1,3 @@
--- Debug flag: set to true to enable debug logging
-local debug = false
-local research_map = {}
-
 local function starts_with(str, start)
     return str:sub(1, #start) == start
 end
@@ -12,27 +8,18 @@ local function log_debug(message)
     end
 end
 
--- Function to map signal names to research technologies
-local function map_signal_to_research(signal_name)
-    local last_signal_index = 1
+local function read_force_technologies(force)
     local signals = {}
     for signal in pairs(prototypes.virtual_signal) do
         if starts_with(signal, "infinite-research-") then
-            table.insert(signals, signal)
+            local research_name = signal:gsub("^infinite%-research%-", "")
+            if force.technologies[research_name] then
+                signals[signal] = force.technologies[research_name]
+                log_debug("Force " .. force.name .. " has researched " .. research_name)
+            end
         end
     end
-
-    for _, p in pairs(game.forces.player.technologies) do
-        if last_signal_index > #signals then
-            break
-        end
-
-        if not p.researched then
-            research_map["infinite-research-" .. p.name] = p.name
-            last_signal_index = last_signal_index + 1
-        end
-    end
-    return research_map[signal_name]
+    return signals
 end
 
 -- Validate and extract signals from a combinator
@@ -59,7 +46,61 @@ local function get_signals_from_combinator(combinator)
     return signals
 end
 
--- Process all registered combinators
+local function process_tracker_combinator(unit_number, combinator_data)
+    local entity = combinator_data.entity
+    if not entity or not entity.valid then
+        storage.combinators[unit_number] = nil
+    elseif combinator_data.entity.name == "Research_Tracker_Combinator" then
+        local force = entity.force
+        local research_map = read_force_technologies(force)
+        local slot = 0
+        local section = entity.get_control_behavior().get_section(1)
+        for signal_name, technology in pairs(research_map) do
+            slot = slot + 1
+            local slot_filter = {value={type="virtual", name=signal_name, quality='normal'}, min=(technology.level-1)}
+            section.set_slot(slot, slot_filter)
+        end
+    end
+end
+
+local function process_control_combinator(unit_number, combinator_data)
+    if combinator_data.name ~= "Research_Control_Combinator" then
+        return
+    end
+    local entity = combinator_data.entity
+    local force = entity.force
+    local research_map = read_force_technologies(force)
+
+    if not entity or not entity.valid then
+        storage.combinators[unit_number] = nil
+    else
+        local signals = get_signals_from_combinator(entity)
+        if #signals > 0 then
+            for _, signal in ipairs(signals) do
+                if signal.signal and signal.signal.type == "virtual" then
+                    local research_name = research_map[signal.signal.name].name
+                    if research_name then
+                        local force = game.forces.player
+                        if force.current_research and force.current_research.name == research_name then
+                            log_debug("Research already set: " .. research_name)
+                        else
+                            force.research_queue = {}
+                            local success = force.add_research(research_name)
+                            if success then
+                                log_debug("Set research to: " .. research_name)
+                            else
+                                log_debug("Failed to set research: " .. research_name)
+                            end
+                        end
+                    else
+                        log_debug("No research mapped for signal: " .. signal.signal.name)
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function process_combinators()
     if not storage.combinators then
         log_debug("storage.combinators is nil. Skipping processing.")
@@ -70,36 +111,8 @@ local function process_combinators()
         if not combinator_data or not combinator_data.position or not combinator_data.surface then
             storage.combinators[unit_number] = nil
         else
-            local surface = game.surfaces[combinator_data.surface]
-            local entity = surface and surface.find_entity("Research_Control_Combinator", combinator_data.position)
-            if not entity or not entity.valid then
-                storage.combinators[unit_number] = nil
-            else
-                local signals = get_signals_from_combinator(entity)
-                if #signals > 0 then
-                    for _, signal in ipairs(signals) do
-                        if signal.signal and signal.signal.type == "virtual" then
-                            local research_name = map_signal_to_research(signal.signal.name)
-                            if research_name then
-                                local force = game.forces.player
-                                if force.current_research and force.current_research.name == research_name then
-                                    log_debug("Research already set: " .. research_name)
-                                else
-                                    force.research_queue = {}
-                                    local success = force.add_research(research_name)
-                                    if success then
-                                        log_debug("Set research to: " .. research_name)
-                                    else
-                                        log_debug("Failed to set research: " .. research_name)
-                                    end
-                                end
-                            else
-                                log_debug("No research mapped for signal: " .. signal.signal.name)
-                            end
-                        end
-                    end
-                end
-            end
+            process_control_combinator(unit_number, combinator_data)
+            process_tracker_combinator(unit_number, combinator_data)
         end
     end
 end
@@ -107,12 +120,14 @@ end
 -- Handle combinator placement
 local function on_built(event)
     local entity = event.created_entity or event.entity
-    if not entity or entity.name ~= "Research_Control_Combinator" then return end
+    if not entity or (entity.name ~= "Research_Control_Combinator" and entity.name ~= "Research_Tracker_Combinator") then return end
 
     storage.combinators = storage.combinators or {}
     storage.combinators[entity.unit_number] = {
         position = entity.position,
         surface = entity.surface.name,
+        name = entity.name,
+        entity = entity
     }
     entity.operable = false
     log_debug("Added combinator with unit number: " .. entity.unit_number)
@@ -121,7 +136,7 @@ end
 -- Handle combinator removal
 local function on_destroy(event)
     local entity = event.entity
-    if not entity or entity.name ~= "Research_Control_Combinator" then return end
+    if not entity or (entity.name ~= "Research_Control_Combinator" and entity.name ~= "Research_Tracker_Combinator") then return end
 
     if storage.combinators then
         storage.combinators[entity.unit_number] = nil
@@ -133,17 +148,6 @@ end
 local function on_init()
     storage.combinators = storage.combinators or {}
     log_debug("Initialized mod storage.")
-
-    commands.add_command("research_signals", [["Show infinite technologies and
-    their linked signals for Research Control Combinator"]], function(command)
-        map_signal_to_research("")
-
-        local s = ""
-        for k, v in pairs(research_map) do
-            s = s .. k .. " => " .. v .. ", "
-        end
-        game.print(string.sub(s, 1, -3))
-    end)
 end
 
 -- Reload storage on game load
@@ -158,18 +162,7 @@ local function on_load()
     script.on_event(defines.events.on_robot_pre_mined, on_destroy)
     script.on_event(defines.events.script_raised_destroy, on_destroy)
     script.on_event(defines.events.on_research_finished, process_combinators)
-    script.on_nth_tick(60, process_combinators)
-
-    commands.add_command("research_signals", [["Show infinite technologies and
-    their linked signals for Research Control Combinator"]], function(command)
-        map_signal_to_research("")
-
-        local s = ""
-        for k, v in pairs(research_map) do
-            s = s .. k .. " => " .. v .. ", "
-        end
-        game.print(string.sub(s, 1, -3))
-    end)
+    script.on_nth_tick(settings.startup["research-control-combinator-polling-tick"].value, process_combinators)
 end
 
 
