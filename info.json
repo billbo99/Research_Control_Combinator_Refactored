@@ -1,6 +1,6 @@
 {
     "name": "Research_Control_Combinator_Refactored",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "title": "Research Control Combinator Refactored",
     "author": "Billbo99",
     "description": "Adds a combinator that sets infinite research based on a virtual signal input. Refactored for compatibility with Factorio 2.0 and Space Age mod.",

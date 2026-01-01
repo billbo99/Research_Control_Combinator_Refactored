@@ -84,7 +84,17 @@ local function process_control_combinator(unit_number, combinator_data)
                         if force.current_research and force.current_research.name == research_name then
                             log_debug("Research already set: " .. research_name)
                         else
-                            force.research_queue = {}
+                            if not settings.global["research-control-combinator-add-to-queue"].value then
+                                log_debug("Clearing research queue for force: " .. force.name)
+                                force.research_queue = {}
+                            end
+
+                            for _, queued_research in pairs(force.research_queue) do
+                                if queued_research.name == research_name then
+                                    log_debug("Research already in queue: " .. research_name)
+                                    return
+                                end
+                            end
                             local success = force.add_research(research_name)
                             if success then
                                 log_debug("Set research to: " .. research_name)
